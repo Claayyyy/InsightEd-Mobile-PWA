@@ -1,4 +1,18 @@
+/* src/index.css */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Apply Poppins globally */
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: #f8fafc;
+  color: #1e293b;
+}
+
+/* Ensure inputs use Poppins too */
+input, select, textarea, button {
+  font-family: 'Poppins', sans-serif;
+}
