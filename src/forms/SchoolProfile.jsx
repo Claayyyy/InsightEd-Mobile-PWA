@@ -23,9 +23,7 @@ const SchoolProfile = () => {
     // Modals
     const [showSaveModal, setShowSaveModal] = useState(false); 
     const [showEditModal, setShowEditModal] = useState(false); 
-    const [isChecked, setIsChecked] = useState(false); 
-    const [editAgreement, setEditAgreement] = useState(false); 
-
+    
     // Dropdown Data
     const [provinceOptions, setProvinceOptions] = useState([]);
     const [cityOptions, setCityOptions] = useState([]);
@@ -34,9 +32,10 @@ const SchoolProfile = () => {
     const [districtOptions, setDistrictOptions] = useState([]); 
     const [legDistrictOptions, setLegDistrictOptions] = useState([]);
     
-    // Maps (Data Relationships)
-    const [districtMap, setDistrictMap] = useState({}); 
+    // Data Caches
+    const [schoolDirectory, setSchoolDirectory] = useState([]); // Stores CSV data
     const [regionDivMap, setRegionDivMap] = useState({}); 
+    const [divDistMap, setDivDistMap] = useState({}); 
 
     // Form Data
     const [formData, setFormData] = useState({
@@ -79,83 +78,128 @@ const SchoolProfile = () => {
         let isMounted = true;
 
         const initialize = async () => {
-            // A. LOAD CSV & BUILD MAPS
-            const csvMaps = await new Promise((resolve) => {
-                Papa.parse('/schools.csv', {
-                    download: true, header: true, skipEmptyLines: true,
-                    complete: (results) => {
-                        if (!isMounted) return;
-                        const rows = results.data;
-                        const tempRegDiv = {}; const tempDivDist = {}; const tempLegs = new Set();
+            try {
+                // A. FETCH CSV TEXT MANUALLY (Fixes JSON Error)
+                const csvResponse = await fetch('/schools.csv');
+                const csvText = await csvResponse.text();
 
-                        if (rows && rows.length > 0) {
-                            const headers = Object.keys(rows[0]);
-                            const clean = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
-                            
-                            const regKey = headers.find(h => clean(h) === 'region');
-                            const divKey = headers.find(h => clean(h) === 'division');
-                            const distKey = headers.find(h => clean(h) === 'district'); 
-                            const legKey = headers.find(h => clean(h).includes('legislative') || clean(h) === 'legdistrict');
-
-                            rows.forEach(row => {
-                                const reg = regKey ? row[regKey]?.trim() : null;
-                                const div = divKey ? row[divKey]?.trim() : null;
-                                const dist = distKey ? row[distKey]?.trim() : null;
-                                const leg = legKey ? row[legKey]?.trim() : null;
-
-                                if (reg && div) { if (!tempRegDiv[reg]) tempRegDiv[reg] = new Set(); tempRegDiv[reg].add(div); }
-                                if (div && dist) { if (!tempDivDist[div]) tempDivDist[div] = new Set(); tempDivDist[div].add(dist); }
-                                if (leg) tempLegs.add(leg);
-                            });
-
-                            const processedRegDiv = {}; Object.keys(tempRegDiv).forEach(k => processedRegDiv[k] = Array.from(tempRegDiv[k]).sort());
-                            const processedDivDist = {}; Object.keys(tempDivDist).forEach(k => processedDivDist[k] = Array.from(tempDivDist[k]).sort());
-
-                            setRegionDivMap(processedRegDiv);
-                            setDistrictMap(processedDivDist);
-                            setLegDistrictOptions(Array.from(tempLegs).sort());
-                            resolve({ regDiv: processedRegDiv, divDist: processedDivDist });
-                        } else { resolve({ regDiv: {}, divDist: {} }); }
-                    }
+                // B. PARSE CSV & BUILD MAPS
+                const parsedData = await new Promise((resolve) => {
+                    Papa.parse(csvText, {
+                        header: true, 
+                        skipEmptyLines: true,
+                        complete: (results) => resolve(results.data),
+                        error: () => resolve([])
+                    });
                 });
-            });
 
-            // B. CHECK DATABASE
-            onAuthStateChanged(auth, async (user) => {
-                if (!isMounted) return;
-                
-                if (user) {
-                    try {
-                        const response = await fetch('/schools.csv');
-                        const result = await response.json();
-                        
-                        if (result.exists) {
-                            const dbData = result.data;
-                            
-                            if (locationData[dbData.region]) setProvinceOptions(Object.keys(locationData[dbData.region]).sort());
-                            if (locationData[dbData.region]?.[dbData.province]) setCityOptions(Object.keys(locationData[dbData.region][dbData.province]).sort());
-                            if (locationData[dbData.region]?.[dbData.province]?.[dbData.municipality]) setBarangayOptions(locationData[dbData.region][dbData.province][dbData.municipality].sort());
+                if (isMounted) {
+                    setSchoolDirectory(parsedData); // Store for fast searching
+                    
+                    // Build Lookup Maps for Dropdowns
+                    const tempRegDiv = {}; 
+                    const tempDivDist = {}; 
+                    const tempLegs = new Set();
 
-                            if (dbData.region && csvMaps.regDiv[dbData.region]) setDivisionOptions(csvMaps.regDiv[dbData.region]);
-                            if (dbData.division && csvMaps.divDist[dbData.division]) setDistrictOptions(csvMaps.divDist[dbData.division]);
+                    const clean = (str) => str ? String(str).toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+                    
+                    // Identify Dynamic Headers
+                    const headers = parsedData.length > 0 ? Object.keys(parsedData[0]) : [];
+                    const regKey = headers.find(h => clean(h) === 'region');
+                    const divKey = headers.find(h => clean(h) === 'division');
+                    const distKey = headers.find(h => clean(h) === 'district'); 
+                    const legKey = headers.find(h => clean(h).includes('legislative') || clean(h) === 'legdistrict');
 
-                            const loadedData = {
-                                schoolId: dbData.school_id, schoolName: dbData.school_name,
-                                region: dbData.region, province: dbData.province, municipality: dbData.municipality, barangay: dbData.barangay,
-                                division: dbData.division, district: dbData.district, legDistrict: dbData.leg_district,
-                                motherSchoolId: dbData.mother_school_id, latitude: dbData.latitude, longitude: dbData.longitude
-                            };
+                    parsedData.forEach(row => {
+                        const reg = regKey ? row[regKey]?.trim() : null;
+                        const div = divKey ? row[divKey]?.trim() : null;
+                        const dist = distKey ? row[distKey]?.trim() : null;
+                        const leg = legKey ? row[legKey]?.trim() : null;
 
-                            setFormData(loadedData);
-                            setOriginalData(loadedData); 
-                            setLastUpdated(dbData.submitted_at); 
-                            setIsLocked(true); 
-                            setHasSavedData(true);
+                        if (reg && div) { 
+                            if (!tempRegDiv[reg]) tempRegDiv[reg] = new Set(); 
+                            tempRegDiv[reg].add(div); 
                         }
-                    } catch (error) { console.error("Auto-load failed:", error); }
+                        if (div && dist) { 
+                            if (!tempDivDist[div]) tempDivDist[div] = new Set(); 
+                            tempDivDist[div].add(dist); 
+                        }
+                        if (leg) tempLegs.add(leg);
+                    });
+
+                    // Convert Sets to Sorted Arrays
+                    const processedRegDiv = {}; 
+                    Object.keys(tempRegDiv).forEach(k => processedRegDiv[k] = Array.from(tempRegDiv[k]).sort());
+                    
+                    const processedDivDist = {}; 
+                    Object.keys(tempDivDist).forEach(k => processedDivDist[k] = Array.from(tempDivDist[k]).sort());
+
+                    setRegionDivMap(processedRegDiv);
+                    setDivDistMap(processedDivDist);
+                    setLegDistrictOptions(Array.from(tempLegs).sort());
+                
+                    // C. CHECK DATABASE FOR EXISTING USER DATA
+                    onAuthStateChanged(auth, async (user) => {
+                        if (!user || !isMounted) return;
+
+                        try {
+                            // Use Relative Path for Vercel/Localhost compatibility
+                            const response = await fetch(`/api/school-by-user/${user.uid}`);
+                            const result = await response.json();
+                            
+                            if (result.exists) {
+                                const dbData = result.data;
+                                
+                                // Pre-fill Cascading Dropdowns based on DB Data
+                                if (locationData[dbData.region]) {
+                                    setProvinceOptions(Object.keys(locationData[dbData.region]).sort());
+                                    if (locationData[dbData.region][dbData.province]) {
+                                        setCityOptions(Object.keys(locationData[dbData.region][dbData.province]).sort());
+                                        if (locationData[dbData.region][dbData.province][dbData.municipality]) {
+                                            setBarangayOptions(locationData[dbData.region][dbData.province][dbData.municipality].sort());
+                                        }
+                                    }
+                                }
+
+                                if (dbData.region && processedRegDiv[dbData.region]) {
+                                    setDivisionOptions(processedRegDiv[dbData.region]);
+                                }
+                                if (dbData.division && processedDivDist[dbData.division]) {
+                                    setDistrictOptions(processedDivDist[dbData.division]);
+                                }
+
+                                const loadedData = {
+                                    schoolId: dbData.school_id, 
+                                    schoolName: dbData.school_name,
+                                    region: dbData.region, 
+                                    province: dbData.province, 
+                                    municipality: dbData.municipality, 
+                                    barangay: dbData.barangay,
+                                    division: dbData.division, 
+                                    district: dbData.district, 
+                                    legDistrict: dbData.leg_district,
+                                    motherSchoolId: dbData.mother_school_id, 
+                                    latitude: dbData.latitude, 
+                                    longitude: dbData.longitude
+                                };
+
+                                setFormData(loadedData);
+                                setOriginalData(loadedData); 
+                                setLastUpdated(dbData.submitted_at); 
+                                setIsLocked(true); 
+                                setHasSavedData(true);
+                            }
+                        } catch (error) { 
+                            console.error("DB Check failed:", error); 
+                        } finally {
+                            if (isMounted) setLoading(false);
+                        }
+                    });
                 }
-                setTimeout(() => { if (isMounted) setLoading(false); }, 1000); 
-            });
+            } catch (err) {
+                console.error("Initialization Error:", err);
+                if (isMounted) setLoading(false);
+            }
         };
 
         initialize();
@@ -169,7 +213,15 @@ const SchoolProfile = () => {
         const selectedRegion = e.target.value;
         const validDivisions = regionDivMap[selectedRegion] || [];
         setDivisionOptions(validDivisions);
-        setFormData(prev => ({ ...prev, region: selectedRegion, province: '', municipality: '', barangay: '', division: '', district: '' }));
+        
+        // Reset dependent fields
+        setFormData(prev => ({ 
+            ...prev, 
+            region: selectedRegion, 
+            province: '', municipality: '', barangay: '', 
+            division: '', district: '' 
+        }));
+
         setProvinceOptions(selectedRegion && locationData[selectedRegion] ? Object.keys(locationData[selectedRegion]).sort() : []);
         setCityOptions([]); setBarangayOptions([]); setDistrictOptions([]); 
     };
@@ -177,7 +229,7 @@ const SchoolProfile = () => {
     const handleDivisionChange = (e) => {
         const selectedDivision = e.target.value;
         setFormData(prev => ({ ...prev, division: selectedDivision, district: '' }));
-        setDistrictOptions(districtMap[selectedDivision] || []);
+        setDistrictOptions(divDistMap[selectedDivision] || []);
     };
 
     const handleProvinceChange = (e) => {
@@ -193,14 +245,15 @@ const SchoolProfile = () => {
         setBarangayOptions(municipality && formData.province ? locationData[formData.region][formData.province][municipality].sort() : []);
     };
 
-    // CSV Autofill
+    // --- AUTOFILL LOGIC (OPTIMIZED) ---
     const handleIdBlur = async () => {
         if (isLocked || hasSavedData) return; 
         const targetId = String(formData.schoolId).trim();
         if (targetId.length < 6) return; 
-        
+
         setLoading(true);
 
+        // 1. Check DB for duplicate
         try {
             const response = await fetch(`/api/check-school/${targetId}`);
             if (response.ok) {
@@ -214,71 +267,82 @@ const SchoolProfile = () => {
             }
         } catch (error) { console.warn("DB Check skipped."); }
 
-        Papa.parse('/schools.csv', {
-            download: true, header: true, skipEmptyLines: true,
-            complete: (results) => {
-                const rows = results.data;
-                const headers = Object.keys(rows[0] || {});
-                const clean = (str) => str?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
-                const idKey = headers.find(h => clean(h) === 'schoolid');
+        // 2. Search Local CSV Data (No re-downloading!)
+        const clean = (str) => str?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+        const headers = schoolDirectory.length > 0 ? Object.keys(schoolDirectory[0]) : [];
+        const idKey = headers.find(h => clean(h) === 'schoolid');
 
-                if (idKey) {
-                    const school = rows.find(s => String(s[idKey]).trim().split('.')[0] === targetId);
-                    if (school) {
-                        const getVal = (target) => {
-                            const k = headers.find(h => clean(h).includes(clean(target)));
-                            return k ? String(school[k]).trim() : '';
-                        };
-                        const findMatch = (options, value) => options.find(opt => clean(opt) === clean(value)) || value;
+        if (idKey) {
+            const school = schoolDirectory.find(s => String(s[idKey]).trim().split('.')[0] === targetId);
+            
+            if (school) {
+                const getVal = (target) => {
+                    const k = headers.find(h => clean(h).includes(clean(target)));
+                    return k ? String(school[k]).trim() : '';
+                };
 
-                        const rawRegion = getVal('region');
-                        const matchedRegion = findMatch(Object.keys(locationData), rawRegion);
-                        const validDivisions = regionDivMap[matchedRegion] || [];
-                        setDivisionOptions(validDivisions);
-                        const rawDiv = getVal('division');
-                        const matchedDiv = findMatch(validDivisions, rawDiv);
-                        const validDistricts = districtMap[matchedDiv] || [];
-                        setDistrictOptions(validDistricts);
-                        
-                        let provOpts = [], matchedProv = getVal('province');
-                        if (locationData[matchedRegion]) {
-                            provOpts = Object.keys(locationData[matchedRegion]).sort();
-                            matchedProv = findMatch(provOpts, matchedProv);
-                        }
-                        setProvinceOptions(provOpts);
+                // Helper to match casing from options
+                const findMatch = (options, value) => options.find(opt => clean(opt) === clean(value)) || value;
 
-                        let cityOpts = [], matchedMun = getVal('municipality');
-                        if (locationData[matchedRegion]?.[matchedProv]) {
-                            cityOpts = Object.keys(locationData[matchedRegion][matchedProv]).sort();
-                            matchedMun = findMatch(cityOpts, matchedMun);
-                        }
-                        setCityOptions(cityOpts);
-
-                        let brgyOpts = [], matchedBrgy = getVal('barangay');
-                        if (locationData[matchedRegion]?.[matchedProv]?.[matchedMun]) {
-                            brgyOpts = locationData[matchedRegion][matchedProv][matchedMun].sort();
-                            matchedBrgy = findMatch(brgyOpts, matchedBrgy);
-                        }
-                        setBarangayOptions(brgyOpts);
-
-                        setFormData(prev => ({
-                            ...prev,
-                            schoolName: getVal('schoolname'),
-                            region: matchedRegion, province: matchedProv, municipality: matchedMun, barangay: matchedBrgy,
-                            division: matchedDiv, district: getVal('district'), 
-                            legDistrict: getVal('legdistrict') || getVal('legislative'),
-                            motherSchoolId: getVal('motherschool') || '', latitude: getVal('latitude'), longitude: getVal('longitude')
-                        }));
-                    } else { alert("School ID not found in CSV."); }
+                // Match Region
+                const rawRegion = getVal('region');
+                const matchedRegion = findMatch(Object.keys(locationData), rawRegion);
+                
+                // Match Division
+                const validDivisions = regionDivMap[matchedRegion] || [];
+                setDivisionOptions(validDivisions);
+                const rawDiv = getVal('division');
+                const matchedDiv = findMatch(validDivisions, rawDiv);
+                
+                // Match District
+                const validDistricts = divDistMap[matchedDiv] || [];
+                setDistrictOptions(validDistricts);
+                
+                // Match Location Hierarchy
+                let provOpts = [], matchedProv = getVal('province');
+                if (locationData[matchedRegion]) {
+                    provOpts = Object.keys(locationData[matchedRegion]).sort();
+                    matchedProv = findMatch(provOpts, matchedProv);
                 }
-                setLoading(false);
-            },
-            error: (err) => { console.error(err); setLoading(false); }
-        });
+                setProvinceOptions(provOpts);
+
+                let cityOpts = [], matchedMun = getVal('municipality');
+                if (locationData[matchedRegion]?.[matchedProv]) {
+                    cityOpts = Object.keys(locationData[matchedRegion][matchedProv]).sort();
+                    matchedMun = findMatch(cityOpts, matchedMun);
+                }
+                setCityOptions(cityOpts);
+
+                let brgyOpts = [], matchedBrgy = getVal('barangay');
+                if (locationData[matchedRegion]?.[matchedProv]?.[matchedMun]) {
+                    brgyOpts = locationData[matchedRegion][matchedProv][matchedMun].sort();
+                    matchedBrgy = findMatch(brgyOpts, matchedBrgy);
+                }
+                setBarangayOptions(brgyOpts);
+
+                setFormData(prev => ({
+                    ...prev,
+                    schoolName: getVal('schoolname'),
+                    region: matchedRegion, 
+                    province: matchedProv, 
+                    municipality: matchedMun, 
+                    barangay: matchedBrgy,
+                    division: matchedDiv, 
+                    district: getVal('district'), 
+                    legDistrict: getVal('legdistrict') || getVal('legislative'),
+                    motherSchoolId: getVal('motherschool') || '', 
+                    latitude: getVal('latitude'), 
+                    longitude: getVal('longitude')
+                }));
+            } else { 
+                alert("School ID not found in CSV directory."); 
+            }
+        }
+        setLoading(false);
     };
 
     // --- BUTTON ACTIONS ---
-    const handleUpdateClick = () => { setEditAgreement(false); setShowEditModal(true); };
+    const handleUpdateClick = () => { setShowEditModal(true); };
     
     const handleConfirmEdit = () => { 
         setOriginalData({...formData}); 
@@ -303,6 +367,7 @@ const SchoolProfile = () => {
         const payload = { ...formData, submittedBy: auth.currentUser.uid };
         
         try {
+            // Using Relative Path for Production/Localhost
             const response = await fetch('/api/save-school', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
             });
@@ -316,7 +381,7 @@ const SchoolProfile = () => {
                 const err = await response.json(); 
                 alert('Failed: ' + err.message); 
             }
-        } catch (error) { alert("Error."); } finally { setIsSaving(false); }
+        } catch (error) { alert("Error saving data."); } finally { setIsSaving(false); }
     };
 
     // Styling Helpers
@@ -329,7 +394,7 @@ const SchoolProfile = () => {
     return (
         <div className="min-h-screen bg-slate-50 font-sans pb-32 relative"> 
             
-            {/* --- TOP HEADER (MATCHING DASHBOARD) --- */}
+            {/* --- TOP HEADER --- */}
             <div className="bg-[#004A99] px-6 pt-12 pb-24 rounded-b-[3rem] shadow-xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
                 <div className="relative z-10 flex items-center gap-4">
@@ -480,11 +545,9 @@ const SchoolProfile = () => {
                 )}
             </div>
 
-            {/* --- MODALS (Code reused from before, kept for functionality) --- */}
-            {/* EDIT WARNING */}
+            {/* --- MODALS --- */}
             {showEditModal && <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6 backdrop-blur-sm"><div className="bg-white p-6 rounded-2xl w-full max-w-sm"><h3 className="font-bold text-lg">Edit Profile?</h3><div className="mt-4 flex gap-2"><button onClick={()=>setShowEditModal(false)} className="flex-1 py-3 border rounded-xl">Cancel</button><button onClick={handleConfirmEdit} className="flex-1 py-3 bg-amber-500 text-white rounded-xl font-bold">Edit</button></div></div></div>}
             
-            {/* SAVE CONFIRMATION */}
             {showSaveModal && (
                 <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6 backdrop-blur-sm">
                     <div className="bg-white p-6 rounded-2xl w-full max-w-sm">
