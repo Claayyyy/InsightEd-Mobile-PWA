@@ -12,9 +12,10 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,csv}'],
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api/],
         
-        // 👇 THIS IS THE FIX: Rename 'navigateFallbackDeny' to 'navigateFallbackDenylist'
-        navigateFallbackDenylist: [/^\/api/], 
+        // 👇 THIS IS THE NEW FIX: Increase limit to 10 MB (in bytes)
+        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, 
       },
 
       manifest: {
