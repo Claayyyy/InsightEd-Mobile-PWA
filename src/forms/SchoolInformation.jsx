@@ -1,8 +1,11 @@
+// src/forms/SchoolInformation.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase'; 
 import { onAuthStateChanged } from "firebase/auth";
 import LoadingScreen from '../components/LoadingScreen'; 
+// 👇 1. IMPORT THE OUTBOX HELPER
+import { addToOutbox } from '../db'; 
 
 const SchoolInformation = () => {
     const navigate = useNavigate();
@@ -73,6 +76,7 @@ const SchoolInformation = () => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 try {
+                    // Attempt to fetch from server
                     const response = await fetch(`/api/school-head/${user.uid}`);
                     if (response.ok) {
                         const result = await response.json();
@@ -92,8 +96,12 @@ const SchoolInformation = () => {
                             setIsLocked(true);
                         }
                     }
-                } catch (error) { console.error("Failed to load info:", error); }
+                } catch (error) { 
+                    // If offline, just log it. The user can still fill out the form.
+                    console.log("Could not load data (Offline or Server Error)."); 
+                }
             }
+            // Always turn off loading screen so they can see the form
             setTimeout(() => { setLoading(false); }, 1000);
         });
         return () => unsubscribe();
@@ -122,14 +130,43 @@ const SchoolInformation = () => {
         setShowSaveModal(true); 
     };
 
-    // --- 2. SAVE DATA ---
+    // --- 2. SAVE DATA (UPDATED FOR OFFLINE) ---
     const confirmSave = async () => {
         setShowSaveModal(false);
         setIsSaving(true);
         const user = auth.currentUser;
+        
+        // Prepare the data package
+        const payload = { uid: user.uid, ...formData };
 
+        // 👇 A. CHECK CONNECTION FIRST
+        if (!navigator.onLine) {
+            try {
+                // 📴 OFFLINE: Save to Outbox
+                await addToOutbox({
+                    type: 'SCHOOL_HEAD_INFO',
+                    label: 'School Head Info', // Used in the Sync Page list
+                    url: '/api/save-school-head',
+                    payload: payload
+                });
+
+                alert("📴 You are offline. \n\nData saved to Outbox! Don't forget to sync when you have internet.");
+                
+                // Update UI to look "saved"
+                setLastUpdated(new Date().toISOString());
+                setOriginalData({...formData});
+                setIsLocked(true); 
+            } catch (error) {
+                console.error(error);
+                alert("Failed to save offline.");
+            } finally {
+                setIsSaving(false);
+            }
+            return; // Stop here!
+        }
+
+        // 🌐 B. ONLINE: Normal Save
         try {
-            const payload = { uid: user.uid, ...formData };
             const response = await fetch('/api/save-school-head', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
             });
@@ -143,7 +180,10 @@ const SchoolInformation = () => {
                 const err = await response.json();
                 alert('Error: ' + err.message);
             }
-        } catch (error) { alert("Failed to connect."); } 
+        } catch (error) { 
+            // Fallback if fetch crashes (network error)
+            alert("Network Error. Please try again."); 
+        } 
         finally { setIsSaving(false); }
     };
     

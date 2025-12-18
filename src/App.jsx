@@ -11,7 +11,8 @@ import SchoolHeadDashboard from './modules/SchoolHeadDashboard';
 import HRDashboard from './modules/HRDashboard';
 import AdminDashboard from './modules/AdminDashboard'; 
 import UserProfile from './modules/UserProfile'; 
-import Activity from './modules/Activity';    
+import Activity from './modules/Activity'; 
+import Outbox from './modules/Outbox';   
 
 // Forms Menus
 import SchoolForms from './modules/SchoolForms';
@@ -60,6 +61,7 @@ function App() {
         {/* User Utilities */}
         <Route path="/profile" element={<UserProfile />} />
         <Route path="/activities" element={<Activity />} />
+        <Route path="/outbox" element={<Outbox />} />
           
         {/* --- INDIVIDUAL FORM ROUTES --- */}
         

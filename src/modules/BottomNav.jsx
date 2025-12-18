@@ -3,9 +3,10 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-// 1. IMPORT YOUR NEW ICON HERE
-import { TbHomeEdit } from "react-icons/tb"; 
-import { LuActivity, LuUser } from "react-icons/lu"; // Keep these for the other buttons
+// 1. ICONS
+// We use TbCloudUpload because 'react-icons/tb' is confirmed to be working
+import { TbHomeEdit, TbCloudUpload } from "react-icons/tb"; 
+import { LuUser } from "react-icons/lu"; 
 
 const BottomNav = ({ homeRoute }) => {
     const navigate = useNavigate();
@@ -26,31 +27,28 @@ const BottomNav = ({ homeRoute }) => {
 
             <div style={styles.navItems}>
                 
-                {/* 1. ACTIVITY BUTTON */}
+                {/* 1. SYNC / OUTBOX BUTTON (Replaces Activity) */}
                 <button 
                     style={styles.sideButton} 
-                    onClick={() => navigate('/activities')}
+                    onClick={() => navigate('/outbox')}
                 >
-                    {/* REPLACE EMOJI WITH ICON COMPONENT */}
-                    <LuActivity 
+                    <TbCloudUpload 
                         size={24} 
-                        color={location.pathname === '/activities' ? '#094684' : '#B0B0B0'}
+                        color={location.pathname === '/outbox' ? '#094684' : '#B0B0B0'}
                         style={styles.icon}
                     />
                     <span style={{
                         ...styles.label,
-                        color: location.pathname === '/activities' ? '#094684' : '#B0B0B0'
-                    }}>Activity</span>
+                        color: location.pathname === '/outbox' ? '#094684' : '#B0B0B0'
+                    }}>Sync</span>
                 </button>
 
-                {/* 2. HOME BUTTON (Floating) */}
                 {/* 2. HOME BUTTON (Floating) */}
                 <div style={styles.centerButtonContainer}>
                     <button 
                         style={styles.floatingButton}
-                        onClick={() => navigate(homeRoute)}
+                        onClick={() => navigate(homeRoute || '/schoolhead-dashboard')}
                     >
-                        {/* REPLACE HERE */}
                         <TbHomeEdit size={30} color="#ffffffff" />
                     </button>
                 </div>
@@ -58,16 +56,16 @@ const BottomNav = ({ homeRoute }) => {
                 {/* 3. PROFILE BUTTON */}
                 <button 
                     style={styles.sideButton} 
-                    onClick={() => navigate('/profile')}
+                    onClick={() => navigate('/user-profile')}
                 >
                     <LuUser 
                         size={24} 
-                        color={location.pathname === '/profile' ? '#094684' : '#B0B0B0'}
+                        color={location.pathname === '/user-profile' ? '#094684' : '#B0B0B0'}
                         style={styles.icon}
                     />
                     <span style={{
                         ...styles.label,
-                        color: location.pathname === '/profile' ? '#094684' : '#B0B0B0'
+                        color: location.pathname === '/user-profile' ? '#094684' : '#B0B0B0'
                     }}>Profile</span>
                 </button>
             </div>
@@ -136,8 +134,8 @@ const styles = {
         width: '60px',
         height: '60px',
         borderRadius: '50%',
-        backgroundColor: '#0c4885', // DepEd Red
-        border: '4px solid #ffffffff', // Matches your background color
+        backgroundColor: '#0c4885', // DepEd Blue
+        border: '4px solid #ffffffff', 
         boxShadow: '0 4px 10px rgba(20, 20, 20, 0.4)',
         display: 'flex',
         alignItems: 'center',
@@ -146,7 +144,7 @@ const styles = {
         transition: 'transform 0.2s',
     },
     icon: {
-        marginBottom: '4px', // Space between icon and text
+        marginBottom: '4px', 
         transition: 'color 0.3s',
     },
     label: {
