@@ -1,9 +1,8 @@
-// src/firebase.js (CORRECTED)
-import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth"; // <-- NEW IMPORT
-import { getFirestore } from "firebase/firestore"; // <-- NEW IMPORT
+// src/firebase.js
+import { initializeApp, getApps } from "firebase/app"; // 👈 Added getApps
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDKbjlnMauvdUZS4S8V6FkNaWAEXFQ1fFs",
   authDomain: "insighted-6ba10.firebaseapp.com",
@@ -14,12 +13,25 @@ const firebaseConfig = {
   measurementId: "G-YNB5VVV6ZN"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// 1. SINGLETON CHECK: Only initialize if no app exists
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Initialize and EXPORT the services
-export const auth = getAuth(app); // <-- EXPORTED
-export const googleProvider = new GoogleAuthProvider(); // <-- EXPORTED
-export const db = getFirestore(app); // <-- EXPORTED
+// 2. Export Services
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+export const db = getFirestore(app);
 
-// Note: You can remove the unused getAnalytics import and analytics constant for now.
+// 3. ENABLE OFFLINE DATABASE (With Error Handling)
+// We wrap this in a catch block so it doesn't crash your app during reloads
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+      // Error: Multiple tabs open. Persistence can only be enabled in one tab at a time.
+      console.warn('Firestore persistence enabled in another tab.');
+  } else if (err.code === 'unimplemented') {
+      // Error: The current browser does not support all of the features required.
+      console.warn('Firestore persistence not supported by this browser.');
+  } else {
+      // This ignores the "already started" error during hot-reloads
+      console.log('Firestore persistence already active.');
+  }
+});
