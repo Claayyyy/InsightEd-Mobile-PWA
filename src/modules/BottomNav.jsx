@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 
 // ICONS
 import { TbHomeEdit, TbCloudUpload } from "react-icons/tb"; 
-import { LuUser, LuCompass } from "react-icons/lu"; // Added LuCompass for Explore
+import { LuUser, LuCompass } from "react-icons/lu"; 
 
 const BottomNav = ({ homeRoute, userRole = 'School Head' }) => {
     const navigate = useNavigate();
@@ -12,25 +12,32 @@ const BottomNav = ({ homeRoute, userRole = 'School Head' }) => {
 
     // --- CONFIGURATION LOGIC ---
     const getNavItems = () => {
+        // ENGINEER LAYOUT
         if (userRole === 'Engineer') {
             return {
+                // Left: Explore
                 left: { label: 'Explore', path: '/new-project', icon: LuCompass },
+                // Center: Home
                 center: { label: 'Home', path: '/engineer-dashboard', icon: TbHomeEdit },
-                right: { label: 'Sync', path: '/outbox', icon: TbCloudUpload }
+                // Right: Profile (Fixed: Was previously Sync)
+                right: { label: 'Profile', path: '/profile', icon: LuUser }
             };
         }
-        // Default (School Head / Others) - Uses the layout you provided
+
+        // SCHOOL HEAD LAYOUT (Default)
         return {
+            // Left: Sync
             left: { label: 'Sync', path: '/outbox', icon: TbCloudUpload },
+            // Center: Home
             center: { label: 'Home', path: homeRoute || '/schoolhead-dashboard', icon: TbHomeEdit },
+            // Right: Profile
             right: { label: 'Profile', path: '/profile', icon: LuUser }
         };
     };
 
     const { left, center, right } = getNavItems();
 
-    // --- RENDER HELPERS ---
-    // Helper to keep JSX clean while retaining your exact styles
+    // --- RENDER HELPER ---
     const renderSideButton = (item) => {
         const isActive = location.pathname === item.path;
         const Icon = item.icon;
@@ -68,10 +75,10 @@ const BottomNav = ({ homeRoute, userRole = 'School Head' }) => {
 
             <div style={styles.navItems}>
                 
-                {/* 1. LEFT BUTTON (Explore for Engineer / Sync for Head) */}
+                {/* 1. LEFT BUTTON (Explore for Engineer / Sync for School Head) */}
                 {renderSideButton(left)}
 
-                {/* 2. HOME BUTTON (Floating) */}
+                {/* 2. HOME BUTTON (Floating Center) */}
                 <div style={styles.centerButtonContainer}>
                     <button 
                         style={styles.floatingButton}
@@ -81,7 +88,7 @@ const BottomNav = ({ homeRoute, userRole = 'School Head' }) => {
                     </button>
                 </div>
 
-                {/* 3. RIGHT BUTTON (Sync for Engineer / Profile for Head) */}
+                {/* 3. RIGHT BUTTON (Profile for Both) */}
                 {renderSideButton(right)}
 
             </div>
