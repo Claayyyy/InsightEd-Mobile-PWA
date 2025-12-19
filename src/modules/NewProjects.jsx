@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
+import Papa from 'papaparse'; // Import PapaParse
+import { auth } from '../firebase'; // <--- NEW: Added to get the logged-in engineer's ID
 
 // Helper component for Section Headers
 const SectionHeader = ({ title, icon }) => (
@@ -12,7 +14,26 @@ const SectionHeader = ({ title, icon }) => (
 
 const NewProjects = () => {
     const navigate = useNavigate();
-    const [isSubmitting, setIsSubmitting] = useState(false); 
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // State to hold the CSV data
+    const [schoolData, setSchoolData] = useState([]); 
+
+    // --- 1. LOAD CSV DATA ON MOUNT ---
+    useEffect(() => {
+        Papa.parse('/schools.csv', {
+            download: true,
+            header: true, // Uses the first row as keys (school_id, school_name, etc.)
+            skipEmptyLines: true,
+            complete: (results) => {
+                console.log("Loaded schools:", results.data.length);
+                setSchoolData(results.data);
+            },
+            error: (err) => {
+                console.error("Error loading CSV:", err);
+            }
+        });
+    }, []);
 
     const [formData, setFormData] = useState({
         // Basic Info
@@ -41,66 +62,98 @@ const NewProjects = () => {
         otherRemarks: ''
     });
 
+    // --- 2. AUTOFILL LOGIC ---
+    const handleAutoFill = (name, value, currentData) => {
+        let updates = {};
+
+        // Case A: User types SCHOOL ID
+        if (name === 'schoolId') {
+            const foundSchool = schoolData.find(s => s.school_id === value);
+            
+            if (foundSchool) {
+                updates.schoolName = foundSchool.school_name || currentData.schoolName;
+                updates.region = foundSchool.region || currentData.region;
+                updates.division = foundSchool.division || currentData.division;
+            }
+        }
+
+        // Case B: User types/selects SCHOOL NAME
+        if (name === 'schoolName') {
+            const foundSchool = schoolData.find(s => 
+                s.school_name && s.school_name.toLowerCase() === value.toLowerCase()
+            );
+
+            if (foundSchool) {
+                updates.schoolId = foundSchool.school_id || currentData.schoolId;
+                updates.region = foundSchool.region || currentData.region;
+                updates.division = foundSchool.division || currentData.division;
+            }
+        }
+
+        return updates;
+    };
+
+    // --- 3. HANDLE CHANGE WITH STRICT VALIDATION ---
     const handleChange = (e) => {
-        const { name, value } = e.target;
-        
+        let { name, value } = e.target;
+
+        if (name === 'schoolId') {
+            value = value.replace(/\D/g, ''); 
+            if (value.length > 6) {
+                value = value.slice(0, 6);
+            }
+        }
+
         setFormData(prev => {
             let newData = { ...prev, [name]: value };
-
-            // --- LOGIC CHANGE: AUTO-SET PERCENTAGE ---
-            if (name === 'status') {
-                if (value === 'Not Yet Started' || value === 'Under Procurement') {
-                    // Reset to 0 for pre-construction statuses
-                    newData.accomplishmentPercentage = 0;
-                } else if (value === 'Completed' || value === 'For Final Inspection') {
-                    // SET TO 100 for Completed and For Final Inspection (UPDATED)
-                    newData.accomplishmentPercentage = 100;
-                }
-                // When status is set to 'Ongoing', the accomplishmentPercentage is naturally 
-                // preserved from the previous state via the spread operator.
-            }
+            const autoFillUpdates = handleAutoFill(name, value, prev);
             
-            // School ID Validation/Handling
-            if (name === 'schoolId') {
-                // Ensure it's an integer and limit length to 6 digits
-                const integerValue = value.replace(/\D/g, ''); // Remove non-digits
-                // Only update the value if it's 6 digits or less
-                newData.schoolId = integerValue.slice(0, 6);
+            if (Object.keys(autoFillUpdates).length > 0) {
+                newData = { ...newData, ...autoFillUpdates };
             }
 
             return newData;
         });
     };
 
+    // --- 4. UPDATED SUBMIT LOGIC (STEP 2) ---
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
+        
+        // Get the current logged-in engineer
+        const currentUser = auth.currentUser;
 
-        // Final validation check before submitting
-        if (formData.schoolId.length !== 6 || isNaN(parseInt(formData.schoolId, 10))) {
-            alert("School ID must be exactly 6 digits.");
+        if (!currentUser) {
+            alert("Session expired. Please log in again to save the project.");
             setIsSubmitting(false);
             return;
         }
 
-        console.log("Attempting to save new project with data:", formData);
+        // Validation: Ensure School ID is 6 digits
+        if (formData.schoolId && formData.schoolId.length !== 6) {
+             alert("Warning: School ID must be exactly 6 digits.");
+             setIsSubmitting(false);
+             return;
+        }
 
         try {
-            const response = await fetch('/api/save-project', {
+            // Prepare the final payload with the engineer's ID and log data
+            const payload = {
+                ...formData,
+                engineer_id: currentUser.uid, // <--- New column created in Step 1
+                uid: currentUser.uid,        // For your logActivity function
+                modifiedBy: currentUser.displayName || currentUser.email // For activity logs
+            };
+
+            const response = await fetch('http://localhost:3000/api/save-project', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(formData),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
             });
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || 'Server error: Failed to save project.');
-            }
+            if (!response.ok) throw new Error('Failed to save project');
 
-            const result = await response.json();
-            console.log('Project saved successfully!', result.project);
             alert('Project saved successfully!');
             navigate('/engineer-dashboard');
             
@@ -112,17 +165,10 @@ const NewProjects = () => {
         }
     };
 
-    // Helper to check if percentage input should be disabled
-    const isPercentageInputDisabled = formData.status === 'Not Yet Started' || 
-                                      formData.status === 'Under Procurement' ||
-                                      formData.status === 'Completed' ||
-                                      formData.status === 'For Final Inspection';
-
     return (
         <PageTransition>
             <div className="min-h-screen bg-slate-50 font-sans pb-24">
                 
-                {/* Header */}
                 <div className="bg-[#004A99] pt-8 pb-16 px-6 rounded-b-[2rem] shadow-xl">
                     <div className="flex items-center gap-3 text-white mb-4">
                         <button onClick={() => navigate(-1)} className="p-2">
@@ -137,46 +183,53 @@ const NewProjects = () => {
                 <form onSubmit={handleSubmit} className="px-6 -mt-10">
                     <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100">
 
-                        {/* 1. Project Identification */}
-                        <SectionHeader title="Project Identification" icon="🏷️" />
+                        <SectionHeader title="Project Identification" icon="🏗️" />
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Project Name <span className="text-red-500">*</span></label>
                                 <input name="projectName" value={formData.projectName} onChange={handleChange} required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
                             </div>
+                            
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">School Name <span className="text-red-500">*</span></label>
-                                <input name="schoolName" value={formData.schoolName} onChange={handleChange} required className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">School ID (6 Digits) <span className="text-red-500">*</span></label>
                                 <input 
-                                    type="text" 
-                                    inputMode="numeric"
-                                    name="schoolId" 
-                                    value={formData.schoolId} 
+                                    list="school-suggestions" 
+                                    name="schoolName" 
+                                    value={formData.schoolName} 
                                     onChange={handleChange} 
                                     required 
-                                    maxLength="6" 
-                                    pattern="\d{6}" 
-                                    title="School ID must be exactly 6 digits"
+                                    placeholder="Type to search..."
+                                    autoComplete="off"
                                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" 
                                 />
+                                <datalist id="school-suggestions">
+                                    {schoolData.slice(0, 100).map((school, index) => (
+                                        <option key={index} value={school.school_name} />
+                                    ))}
+                                </datalist>
                             </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1"> School ID (6 Digits) <span className="text-red-500">*</span> </label>
+                                <input type="text" inputMode="numeric" name="schoolId" value={formData.schoolId} onChange={handleChange} required maxLength="6" placeholder="e.g. 100001" className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 font-mono" />
+                                <div className="text-right text-xs text-slate-400 mt-1">
+                                    {formData.schoolId.length}/6 digits
+                                </div>
+                            </div>
+
                             <div className="flex gap-3">
                                 <div className="flex-1">
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Region</label>
-                                    <input name="region" value={formData.region} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+                                    <input name="region" value={formData.region} readOnly className="w-full p-3 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-sm focus:outline-none" />
                                 </div>
                                 <div className="flex-1">
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Division</label>
-                                    <input name="division" value={formData.division} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+                                    <input name="division" value={formData.division} readOnly className="w-full p-3 bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-sm focus:outline-none" />
                                 </div>
                             </div>
                         </div>
 
-                        {/* 2. Status and Progress */}
-                        <SectionHeader title="Status and Progress" icon="🚧" />
+                        <SectionHeader title="Status and Progress" icon="📊" />
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Initial Status</label>
@@ -190,20 +243,7 @@ const NewProjects = () => {
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Accomplishment Percentage (%)</label>
-                                <input 
-                                    type="number" 
-                                    name="accomplishmentPercentage" 
-                                    value={formData.accomplishmentPercentage} 
-                                    onChange={handleChange} 
-                                    min="0" 
-                                    max="100" 
-                                    // Disable when pre-construction, completed, or for final inspection
-                                    disabled={isPercentageInputDisabled}
-                                    placeholder={isPercentageInputDisabled ? "" : "e.g. 50"}
-                                    className={`w-full p-3 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 transition-colors ${
-                                        isPercentageInputDisabled ? 'bg-slate-200 text-slate-500 font-bold cursor-not-allowed' : 'bg-slate-50'
-                                    }`} 
-                                />
+                                <input type="number" name="accomplishmentPercentage" value={formData.accomplishmentPercentage} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Status As Of Date</label>
@@ -211,9 +251,12 @@ const NewProjects = () => {
                             </div>
                         </div>
 
-                        {/* 3. Timelines */}
                         <SectionHeader title="Timelines" icon="📅" />
                         <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notice to Proceed Date</label>
+                                <input type="date" name="noticeToProceed" value={formData.noticeToProceed} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+                            </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Target Completion Date</label>
                                 <input type="date" name="targetCompletionDate" value={formData.targetCompletionDate} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
@@ -222,13 +265,8 @@ const NewProjects = () => {
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Actual Completion Date</label>
                                 <input type="date" name="actualCompletionDate" value={formData.actualCompletionDate} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Notice to Proceed Date</label>
-                                <input type="date" name="noticeToProceed" value={formData.noticeToProceed} onChange={handleChange} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
-                            </div>
                         </div>
 
-                        {/* 4. Funds and Contractor */}
                         <SectionHeader title="Funds and Contractor" icon="💰" />
                         <div className="space-y-4">
                             <div>
@@ -245,8 +283,7 @@ const NewProjects = () => {
                             </div>
                         </div>
 
-                        {/* 5. Other Remarks */}
-                        <SectionHeader title="Other Remarks" icon="💬" />
+                        <SectionHeader title="Other Remarks" icon="📝" />
                         <div>
                             <textarea 
                                 name="otherRemarks" 
@@ -257,9 +294,9 @@ const NewProjects = () => {
                                 className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" 
                             />
                         </div>
+
                     </div>
 
-                    {/* Actions */}
                     <div className="pt-4 flex gap-3 sticky bottom-0 bg-white pb-2 border-t border-slate-50">
                         <button type="button" onClick={() => navigate(-1)} className="flex-1 py-3 text-slate-600 font-bold text-sm bg-slate-100 rounded-xl hover:bg-slate-200 transition">
                             Cancel
