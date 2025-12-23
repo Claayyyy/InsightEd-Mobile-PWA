@@ -206,7 +206,7 @@ const Login = () => {
                         download="InsightEd.apk"
                         style={{
                             display: 'inline-block',
-                            backgroundColor: '#00ff11ff',
+                            backgroundColor: '#03e812ff',
                             color: 'white',
                             padding: '10px 20px',
                             borderRadius: '12px',
